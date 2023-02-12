@@ -1,0 +1,140 @@
+[package]
+name = "sin"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "sin"
+path = "source/main.rs"
+
+[lib]
+name = "sin"
+path = "source/lib.rs"
+
+[build-dependencies.bindgen]
+version = "0.64.*"
+# https://github.com/rust-lang/rust-bindgen/blob/main/bindgen/Cargo.toml
+default-features = false
+features = ["logging", "runtime"]
+
+[dependencies.anyhow]
+version = "1.0.*"
+# https://github.com/dtolnay/anyhow/blob/master/Cargo.toml
+default-features = false
+features = ["backtrace", "std"]
+
+[dependencies.base64]
+version = "0.21.*"
+# https://github.com/marshallpierce/rust-base64/blob/master/Cargo.toml
+default-features = false
+features = ["std"]
+
+[dependencies.clap]
+version = "4.*"
+# https://docs.rs/clap/latest/clap/_features/index.html
+default-features = false
+features = ["derive", "error-context", "help", "std", "usage"]
+
+[dependencies.clap-verbosity-flag]
+version = "2.*"
+# https://github.com/clap-rs/clap-verbosity-flag/blob/master/Cargo.toml
+default-features = false
+features = []
+
+[dependencies.encoding_rs]
+version = "0.8.*"
+# https://github.com/hsivonen/encoding_rs/blob/master/Cargo.toml
+default-features = false
+features = ["alloc"]
+
+[dependencies.log]
+version = "0.4.*"
+# https://github.com/rust-lang/log/blob/master/Cargo.toml
+default-features = false
+features = ["std"]
+
+[dependencies.log4rs]
+version = "1.2.*"
+# https://github.com/estk/log4rs/blob/master/Cargo.toml
+default-features = false
+features = ["console_appender", "file_appender", "pattern_encoder", "threshold_filter"]
+
+[dependencies.memchr]
+version = "2.5.*"
+# https://github.com/BurntSushi/memchr/blob/master/Cargo.toml
+default-features = false
+features = ["std"]
+
+[dependencies.once_cell]
+version = "1.17.*"
+# https://github.com/matklad/once_cell/blob/master/Cargo.toml
+default-features = false
+features = ["std"]
+
+[dependencies.peg]
+version = "0.8.*"
+# https://github.com/kevinmehall/rust-peg/blob/master/Cargo.toml
+default-features = false
+features = []
+
+[dependencies.rustls]
+version = "0.20.*"
+# https://github.com/rustls/rustls/blob/main/rustls/Cargo.toml
+default-features = false
+features = ["logging", "tls12"]
+
+[dependencies.rustls-native-certs]
+version = "0.6.*"
+# https://github.com/rustls/rustls-native-certs/blob/main/Cargo.toml
+default-features = false
+features = []
+
+[dependencies.uuid]
+version = "1.3.*"
+# https://github.com/uuid-rs/uuid/blob/main/Cargo.toml
+default-features = false
+features = ["std", "v4"]
+
+[dependencies.zeroize]
+version = "1.*"
+# https://github.com/RustCrypto/utils/blob/master/zeroize/Cargo.toml
+default-features = false
+features = ["std"]
+
+[dev-dependencies.env_logger]
+version = "0.10.*"
+# https://github.com/rust-cli/env_logger/blob/main/Cargo.toml
+default-features = false
+features = []
+
+[dev-dependencies.portpicker]
+version = "0.1.*"
+# https://github.com/Dentosal/portpicker-rs/blob/master/Cargo.toml
+default-features = false
+features = []
+
+[dev-dependencies.regex]
+version = "1.*"
+# https://github.com/rust-lang/regex/blob/master/Cargo.toml
+default-features = false
+features = ["std", "unicode-perl"]
+
+[dev-dependencies.test-log]
+version = "0.2.*"
+# https://github.com/d-e-s-o/test-log/blob/main/Cargo.toml
+default-features = false
+features = ["log"]
+
+[dev-dependencies.tempfile]
+version = "3.4.*"
+# https://github.com/Stebalien/tempfile/blob/master/Cargo.toml
+default-features = false
+features = []
+
+[dev-dependencies.users]
+# Appears to be unmaintained but limited to tests.
+version = "0.11.*"
+# https://github.com/ogham/rust-users/blob/master/Cargo.toml
+default-features = false
+features = ["logging"]

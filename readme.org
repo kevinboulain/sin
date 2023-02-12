@@ -1,0 +1,227 @@
+#+options: H:4
+* Table of contents :noexport:toc_4:
+- [[#sin][Sin]]
+  - [[#example-setup][Example setup]]
+  - [[#internals][Internals]]
+
+* Sin
+
+Yet another utility to perform synchronization between IMAP and
+[[https://notmuchmail.org/][Notmuch]] but synchronizing IMAP flags to Notmuch
+tags and vice versa. Based on [[https://notmuchmail.org/software/][this list]]
+it's the only one of its kind so I might as well make use of 'modern' IMAP
+extensions and benefit from the deep integration with Notmuch.
+
+Gmail is explicitly not supported, check out
+[[https://github.com/gauteh/lieer][Lieer]] instead (not tested). I'm also aware
+of [[https://github.com/elizagamedev/mujmap][mujmap]] for JMAP (appears to be
+similar in spirit to Lieer, also not tested).
+
+The following IMAP extensions are expected from the server:
+ - [[https://www.rfc-editor.org/rfc/rfc2342][=NAMESPACE=]]
+ - [[https://www.rfc-editor.org/rfc/rfc3501][=IMAP4rev1= & =AUTH=PLAIN=]]
+ - [[https://www.rfc-editor.org/rfc/rfc4315][=UIDPLUS=]]
+ - [[https://www.rfc-editor.org/rfc/rfc5161][=ENABLE=]]
+ - [[https://www.rfc-editor.org/rfc/rfc6851][=MOVE=]]
+ - [[https://www.rfc-editor.org/rfc/rfc7162][=QRESYNC=]]
+ - [[https://www.rfc-editor.org/rfc/rfc7888][=LITERAL+=]]
+
+If you actually plan to use it, continue reading but please note there's one
+necessary Notmuch patch (see =patches/=). And in case you'd like to report an
+issue please attach the log file (=--log_directory=), sanitize as necessary.
+
+** Example setup
+
+=~/.config/notmuch/default/config=:
+#+begin_src
+[search]
+# deleted;spam is the default.
+exclude_tags = sin.internal;deleted;spam
+#+end_src
+
+=~/.config/notmuch/default/hooks/common.bash=:
+#+begin_src bash
+declare -a sin_arguments=(
+  --address "$imap_server_address" --port "$imap_server_port" --tls --timeout 10
+  --maildir "$email_address" --user "$email_address" -- pass "$password_store_entry"
+)
+
+move() {
+  maildir=$(basename "$(dirname "$(dirname "$1")")")
+  if [ "$maildir" = "$2" ]; then
+    mv "$1" "$(dirname "$1")"/../"$3"/"$(basename "$(dirname "$1")")"/
+  else
+    mv "$1" "$(dirname "$1")"/../../"$3"/"$(basename "$(dirname "$1")")"/
+  fi
+}
+declare -fx move
+#+end_src
+
+=~/.config/notmuch/default/hooks/pre-new=:
+#+begin_src bash
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" > /dev/null && pwd)"/common.bash
+
+sin pull "${sin_arguments[@]}"
+
+# Archive.
+notmuch search --format text0 --output files "folder:$email_address and not tag:inbox" \
+  | xargs -0 -I{} bash -euo pipefail -c 'move "$@"' -- {}  "$email_address" .Archive
+
+# Soft delete.
+notmuch search --format text0 --output files "not folder:$email_address/.Trash and tag:deleted" \
+  | xargs -0 -I{} bash -euo pipefail -c 'move "$@"' -- {}  "$email_address" .Trash
+#+end_src
+
+Archiving is only safe because I have a Sieve script that applies the =inbox=
+flag to all incoming emails, otherwise everything would be archived. Notmuch's
+[[https://notmuchmail.org/doc/latest/man1/notmuch-config.html#nmconfig-new.tags][=new.tags=]]
+can not be honored in this configuration (but Sin could gain an option if that's
+necessary).
+
+=~/.config/notmuch/default/hooks/post-new=:
+#+begin_src bash
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" > /dev/null && pwd)"/common.bash
+
+# Follow Notmuch's convention.
+notmuch tag +deleted -- "folder:$email_address/.Trash"
+notmuch tag +spam -- "folder:$email_address/.Junk"
+
+sin push "${sin_arguments[@]}"
+#+end_src
+
+This example makes use of [[https://www.passwordstore.org/][pass]] but any
+command that can output the password on the first line of stdout is good (for
+example, the discouraged =echo "$password"=).
+
+You can try Sin out without impacting your current Notmuch setup (notice the
+=--notmuch= and =--create= options, which ensure the database is created if it
+doesn't exist yet):
+
+#+begin_src bash
+sin pull \
+    --address "$imap_server_address" --port "$imap_server_port" --tls --timeout 10 \
+    --notmuch /tmp/sin --create \
+    --maildir "$email_address" --user "$email_address" -- pass "$password_store_entry"
+#+end_src
+
+To reset any Sin-managed account:
+
+#+begin_src bash
+rm -r path/to/notmuch/"$email_address"
+notmuch new --no-hooks
+#+end_src
+
+** Internals
+
+Sin uses the Notmuch database to store all its internal state. This has the nice
+property of simplifying commits (anything outside the database would be subject
+to race conditions that, I believe, can not be eliminated). But it expects to
+manage the maildir (FCC and the like are fine but running it on top of an
+existing maildir isn't a goal).
+
+For each account managed by Sin, a root message is created. From the previous
+example, that would be =~/mail/$email_address/sin=. It's unfortunate it has to
+be an email message but I believe it's the only way to store account-wide
+information in an atomic fashion. It's tagged =sin.internal= so it can easily be
+ignored in the searches (with
+[[https://notmuchmail.org/doc/latest/man1/notmuch-config.html#nmconfig-search.exclude_tags][=search.exclude_tags=]]).
+The left part of its message ID is incremented for each new account managed by
+Sin. For example =0@sin= indicates this is the first account, with =$id= 0. The
+following
+[[https://notmuchmail.org/doc/latest/man7/notmuch-properties.html][properties]]
+are attached to it:
+ - =sin.marker=, single-valued, always =root=.
+ - =sin.lastmod=, single-valued, Notmuch's =lastmod=.
+ - =sin.mailbox=, multi-valued, the known mailboxes.
+ - =sin.$mailbox.separator=, single-valued, the separator of the mailbox
+   =$mailbox= (if any).
+ - =sin.$mailbox.uidvalidity=, single-valued, the UID validity of the mailbox
+   =$mailbox=.
+ - =sin.$mailbox.highestmodseq=, single-valued, the highest modification
+   sequence of the mailbox =$mailbox=.
+The marker allows Sin to search for roots. The lastmod allows Sin to be aware of
+all local modifications. The mailbox and its separator allows Sin to detect
+inconsistencies (e.g.: a mailbox has been removed on the server). The last two
+properties allow Sin to efficiently ask the server for changes.
+
+For each message synchronized by Sin, another set of properties is attached to it:
+ - =sin.$id.marker=, single-valued, always =message=.
+ - =sin.$id.mailbox=, multi-valued, the mailboxes in which this email was found.
+ - =sin.$id.$mailbox.uidvalidity=, single-valued, the UID validity of the
+   mailbox =$mailbox=.
+ - =sin.$id.$mailbox.uid=, single-valued, the UID of the email in mailbox
+   =$mailbox=.
+ - =sin.$id.$mailbox.modseq=, single-valued, the modification sequence of the
+   email in mailbox =$mailbox=.
+ - =sin.$id.$mailbox.tag=, multi-valued, last known list of Notmuch tags,
+   to be converted to IMAP flags.
+The marker allows Sin to search for messages. The mailbox allows Sin to search
+for messages in mailboxes. The tags allow Sin to figure out what tag changed.
+Everything else allows Sin to efficiently ask the server for changes.
+
+The synchronization process is close to
+[[https://www.rfc-editor.org/rfc/rfc4549][RFC 4549]].
+
+For the pull part, in a single Notmuch transaction and for each mailbox on the
+server:
+ - When the UID validity is different (=sin.$mailbox.uidvalidity=), remove all
+   local messages (=sin.$id.mailbox=, =sin.$id.$mailbox.uidvalidity=), then
+   accept it as the new one.
+ - Use the highest modification sequence (=sin.$mailbox.highestmodseq=) or 0 to
+   find out new changes.
+ - When a message is already in the database (=sin.$id.$mailbox.uid=) but flags
+   have changed (=sin.$id.$mailbox.tag=), accept the new tags (possibly moving
+   the file between the maildir's =cur= and =new= directories).
+ - When a message is new, write it to the maildir's =tmp= directory (i.e.: not
+   visible to =notmuch new=) and add it to the database.
+ - When a message has been removed from the server, remove it from the maildir
+   and the database (=sin.$id.$mailbox.uid=).
+Once this is done, the transaction is committed then messages present in the
+database and in a maildir's =tmp= directory are moved to =cur= or =new=. That
+should guarantee the maildir and the database are always properly synchronized
+with the server.
+
+For the push part, in a single Notmuch transaction and for each mailbox on the
+server:
+ - When the UID validity is different (=sin.$mailbox.uidvalidity=), bail out and
+   ask to pull.
+ - Find out all messages that were modified locally since the lastmod
+   (=sin.lastmod=) or 0.
+ - When a message is new (as in, discovered by =notmuch new= and not Sin because
+   =sin.$id.marker= isn't set yet), upload it to the server.
+ - When a message is already in the database but tags have changed
+   (=sin.$id.$mailbox.tag=), reflect the changes to the server unless there's a
+   conflict (=sin.$id.$mailbox.modseq=), in which case bail out and ask to pull.
+ - When a message has moved to another maildir (=sin.$id.mailbox=), move it to
+   the corresponding mailbox on the server.
+Once this is done, cache the lastmod and commit the transaction. If any
+operation on the server fails, it means Sin has been interrupted or there was a
+conflicting operation and Sin will bail out and ask to pull, which will resolve
+conflicts.
+
+Sin never performs removals on the server and removals from the maildir can not
+be tracked (like how Notmuch never deletes a message on its own but only sets
+the =deleted= tag). The only destructive action is the removal of flags.
+
+There is one action that can result in duplicate messages on the server: when an
+=APPEND= command is interrupted and not synchronized to the database.
+To the best of my knowledge, this is an IMAP limitation but always running
+=notmuch new= (when set up as shown in the [[#example-setup][example setup]], i.e:
+=sin pull && notmuch new --no-hooks && sin push=) should gracefully recover from
+that (see =tests/interruptions.rs=).
+
+Currently, the push does set the modification sequence on the messages
+(=sin.$id.$mailbox.modseq=) but it is never used as the highest modification
+sequence (=sin.$mailbox.highestmodseq=) so the pull isn't as efficient as it
+could be.
+
+No effort is made to detect new local mailboxes, create them on the server
+first.

@@ -1,0 +1,219 @@
+diff --git a/configure b/configure
+index c3629a73..7afd08c7 100755
+--- a/configure
++++ b/configure
+@@ -422,6 +422,18 @@ else
+ fi
+ unset test_cmdline
+ 
++printf "C compiler supports thread sanitizer... "
++test_cmdline="${CC} ${CFLAGS} ${CPPFLAGS} -fsanitize=thread minimal.c ${LDFLAGS} -o minimal"
++if ${test_cmdline} >/dev/null 2>&1 && ./minimal
++then
++    printf "Yes.\n"
++    have_tsan=1
++else
++    printf "Nope, skipping those tests.\n"
++    have_tsan=0
++fi
++unset test_cmdline
++
+ printf "Reading libnotmuch version from source... "
+ cat > _libversion.c <<EOF
+ #include <stdio.h>
+@@ -1590,8 +1602,9 @@ NOTMUCH_GMIME_VERIFY_WITH_SESSION_KEY=${gmime_verify_with_session_key}
+ NOTMUCH_ZLIB_CFLAGS="${zlib_cflags}"
+ NOTMUCH_ZLIB_LDFLAGS="${zlib_ldflags}"
+ 
+-# Does the C compiler support the address sanitizer
++# Does the C compiler support the sanitizers
+ NOTMUCH_HAVE_ASAN=${have_asan}
++NOTMUCH_HAVE_TSAN=${have_tsan}
+ 
+ # do we have man pages?
+ NOTMUCH_HAVE_MAN=$((have_sphinx))
+diff --git a/lib/query.cc b/lib/query.cc
+index 707f6222..1c60c122 100644
+--- a/lib/query.cc
++++ b/lib/query.cc
+@@ -20,6 +20,7 @@
+ 
+ #include "notmuch-private.h"
+ #include "database-private.h"
++#include "xapian-extra.h"
+ 
+ #include <glib.h> /* GHashTable, GPtrArray */
+ 
+@@ -186,7 +187,7 @@ _notmuch_query_string_to_xapian_query (notmuch_database_t *notmuch,
+ {
+     try {
+ 	if (query_string == "" || query_string == "*") {
+-	    output = Xapian::Query::MatchAll;
++	    output = xapian_query_match_all ();
+ 	} else {
+ 	    output =
+ 		notmuch->query_parser->
+diff --git a/lib/regexp-fields.cc b/lib/regexp-fields.cc
+index 539915d8..3a775261 100644
+--- a/lib/regexp-fields.cc
++++ b/lib/regexp-fields.cc
+@@ -25,6 +25,7 @@
+ #include "regexp-fields.h"
+ #include "notmuch-private.h"
+ #include "database-private.h"
++#include "xapian-extra.h"
+ 
+ notmuch_status_t
+ compile_regex (regex_t &regexp, const char *str, std::string &msg)
+@@ -200,7 +201,7 @@ RegexpFieldProcessor::operator() (const std::string & str)
+     if (str.empty ()) {
+ 	if (options & NOTMUCH_FIELD_PROBABILISTIC) {
+ 	    return Xapian::Query (Xapian::Query::OP_AND_NOT,
+-				  Xapian::Query::MatchAll,
++				  xapian_query_match_all (),
+ 				  Xapian::Query (Xapian::Query::OP_WILDCARD, term_prefix));
+ 	} else {
+ 	    return Xapian::Query (term_prefix);
+diff --git a/test/T800-asan.sh b/test/T800-asan.sh
+index 8607732e..5055c93e 100755
+--- a/test/T800-asan.sh
++++ b/test/T800-asan.sh
+@@ -9,7 +9,7 @@ fi
+ 
+ add_email_corpus
+ 
+-TEST_CFLAGS="-fsanitize=address"
++TEST_CFLAGS="${TEST_CFLAGS:-} -fsanitize=address"
+ 
+ test_begin_subtest "open and destroy"
+ test_C ${MAIL_DIR} ${NOTMUCH_CONFIG} <<EOF
+diff --git a/test/T810-tsan.sh b/test/T810-tsan.sh
+new file mode 100755
+index 00000000..7e877b27
+--- /dev/null
++++ b/test/T810-tsan.sh
+@@ -0,0 +1,92 @@
++#!/usr/bin/env bash
++
++test_directory=$(cd "$(dirname "${BASH_SOURCE[0]}")" > /dev/null && pwd)
++
++test_description='run code with TSan enabled against the library'
++# Note it is hard to ensure race conditions are deterministic so this
++# only provides best effort detection.
++
++. "$test_directory"/test-lib.sh || exit 1
++
++if [ $NOTMUCH_HAVE_TSAN -ne 1 ]; then
++    printf "Skipping due to missing TSan support\n"
++    test_done
++fi
++
++export TSAN_OPTIONS="suppressions=$test_directory/T810-tsan.suppressions"
++TEST_CFLAGS="${TEST_CFLAGS:-} -fsanitize=thread"
++
++cp -r ${MAIL_DIR} ${MAIL_DIR}-2
++
++test_begin_subtest "create"
++test_C ${MAIL_DIR} ${MAIL_DIR}-2 <<EOF
++#include <notmuch-test.h>
++#include <pthread.h>
++
++void *thread (void *arg) {
++  char *mail_dir = arg;
++  /*
++   * Calls into notmuch_query_search_messages which was using the thread-unsafe
++   * Xapian::Query::MatchAll.
++   */
++  EXPECT0(notmuch_database_create (mail_dir, NULL));
++  return NULL;
++}
++
++int main (int argc, char **argv) {
++  pthread_t t1, t2;
++  EXPECT0(pthread_create (&t1, NULL, thread, argv[1]));
++  EXPECT0(pthread_create (&t2, NULL, thread, argv[2]));
++  EXPECT0(pthread_join (t1, NULL));
++  EXPECT0(pthread_join (t2, NULL));
++  return 0;
++}
++EOF
++cat <<EOF > EXPECTED
++== stdout ==
++== stderr ==
++EOF
++test_expect_equal_file EXPECTED OUTPUT
++
++add_email_corpus
++rm -r ${MAIL_DIR}-2
++cp -r ${MAIL_DIR} ${MAIL_DIR}-2
++
++test_begin_subtest "query"
++test_C ${MAIL_DIR} ${MAIL_DIR}-2 <<EOF
++#include <notmuch-test.h>
++#include <pthread.h>
++
++void *thread (void *arg) {
++  char *mail_dir = arg;
++  notmuch_database_t *db;
++  /*
++   * 'from' is NOTMUCH_FIELD_PROBABILISTIC | NOTMUCH_FIELD_PROCESSOR and an
++   * empty string gets us to RegexpFieldProcessor::operator which was using
++   * the tread-unsafe Xapian::Query::MatchAll.
++   */
++  EXPECT0(notmuch_database_open_with_config (mail_dir,
++                                             NOTMUCH_DATABASE_MODE_READ_ONLY,
++                                             NULL, NULL, &db, NULL));
++  notmuch_query_t *query = notmuch_query_create (db, "from:\"\"");
++  notmuch_messages_t *messages;
++  EXPECT0(notmuch_query_search_messages (query, &messages));
++  return NULL;
++}
++
++int main (int argc, char **argv) {
++  pthread_t t1, t2;
++  EXPECT0(pthread_create (&t1, NULL, thread, argv[1]));
++  EXPECT0(pthread_create (&t2, NULL, thread, argv[2]));
++  EXPECT0(pthread_join (t1, NULL));
++  EXPECT0(pthread_join (t2, NULL));
++  return 0;
++}
++EOF
++cat <<EOF > EXPECTED
++== stdout ==
++== stderr ==
++EOF
++test_expect_equal_file EXPECTED OUTPUT
++
++test_done
+diff --git a/test/T810-tsan.suppressions b/test/T810-tsan.suppressions
+new file mode 100644
+index 00000000..dbd16a94
+--- /dev/null
++++ b/test/T810-tsan.suppressions
+@@ -0,0 +1,5 @@
++# It's unclear how TSan-friendly GLib is:
++# https://gitlab.gnome.org/GNOME/glib/-/issues/1672
++race:g_rw_lock_reader_lock
++# https://gitlab.gnome.org/GNOME/glib/-/issues/1952
++race:g_slice_alloc0
+diff --git a/util/xapian-extra.h b/util/xapian-extra.h
+new file mode 100644
+index 00000000..39c7f48f
+--- /dev/null
++++ b/util/xapian-extra.h
+@@ -0,0 +1,15 @@
++#ifndef _XAPIAN_EXTRA_H
++#define _XAPIAN_EXTRA_H
++
++#include <string>
++#include <xapian.h>
++
++inline Xapian::Query
++xapian_query_match_all (void)
++{
++    // Xapian::Query::MatchAll isn't thread safe (a static object with reference
++    // counting) so instead reconstruct the equivalent on demand.
++    return Xapian::Query (std::string ());
++}
++
++#endif

@@ -1,0 +1,10 @@
+# https://github.com/brotzeit/rustic#edition-2018
+edition = "2021"
+
+# https://github.com/rust-lang/rustfmt/blob/master/Configurations.md#tab_spaces
+tab_spaces = 2
+
+# https://github.com/rust-lang/rustfmt/issues/5577
+# Doesn't completely fix comments alignment though:
+# https://github.com/rust-lang/rustfmt/pull/3833
+version = "Two"
