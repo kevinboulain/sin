@@ -57,24 +57,6 @@ fn parse_number(n: &[u8]) -> u64 {
   str::from_utf8(n).unwrap().parse().unwrap()
 }
 
-// The naive l:$(CHAR8()*<{n}>) in literal() would result in pushing every CHAR8() into the vector
-// before discarding it because we reference it: https://github.com/kevinmehall/rust-peg/pull/292
-// That's probably the most critical part of the parser since that's how emails are transferred.
-// Instead, we use an undocumented escape hatch to do a fast skip (CHAR8() excludes null bytes but
-// it shouldn't really matter): https://github.com/kevinmehall/rust-peg/issues/284
-trait ParserHacks {
-  fn skip(&self, position: usize, n: usize) -> peg::RuleResult<()>;
-}
-
-impl ParserHacks for [u8] {
-  fn skip(&self, position: usize, n: usize) -> peg::RuleResult<()> {
-    if self.len() >= position + n {
-      return peg::RuleResult::Matched(position + n, ());
-    }
-    peg::RuleResult::Failed
-  }
-}
-
 peg::parser! {
   // https://www.rfc-editor.org/rfc/rfc2234#section-2.3
   // https://www.rfc-editor.org/rfc/rfc3501#section-9
@@ -149,7 +131,10 @@ peg::parser! {
       { q }
     // literal = "{" number "}" CRLF *CHAR8
     rule literal() -> &'input [u8]
-      = "{" n:number() "}" CRLF() position!() l:$(##skip(usize::try_from(n).unwrap() /* not much we can do */))
+      // Note that with a sufficiently high optimization level, * will not result in a Vec being
+      // allocated (https://github.com/kevinmehall/rust-peg/pull/292) and there's no need to skip
+      // ahead (https://github.com/kevinmehall/rust-peg/issues/284).
+      = "{" n:number() "}" CRLF() l:$(CHAR8()*<{usize::try_from(n).unwrap() /* not much we can do */}>)
       { l }
     // string = quoted / literal
     rule string() -> borrow::Cow<'input, [u8]>
