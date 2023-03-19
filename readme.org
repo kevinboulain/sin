@@ -101,6 +101,13 @@ This example makes use of [[https://www.passwordstore.org/][pass]] but any
 command that can output the password on the first line of stdout is good (for
 example, the discouraged =echo "$password"=).
 
+And something like that in the Emacs configuration to store emails in the
+correct place:
+#+begin_src emacs-lisp
+(setq notmuch-draft-folder "$email_address/.Drafts"
+      notmuch-fcc-dirs '(("$email_address" . "$email_address/.Sent -unread")))
+#+end_src
+
 You can try Sin out without impacting your current Notmuch setup (notice the
 =--notmuch= and =--create= options, which ensure the database is created if it
 doesn't exist yet):
