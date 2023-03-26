@@ -68,12 +68,20 @@ set -euo pipefail
 sin pull "${sin_arguments[@]}"
 
 # Archive.
-notmuch search --format text0 --output files "folder:$email_address and not tag:inbox" \
-  | xargs -0 -I{} bash -euo pipefail -c 'move "$@"' -- {}  "$email_address" .Archive
+# When the deleted tag is part of search.exclude_tags and later removed from a
+# message, it will be moved out of .Trash to .Archive.
+notmuch search --format text0 --output files "path:$email_address/** and not folder:$email_address/.Archive and not tag:inbox" \
+  | xargs -0 -I{} bash -euo pipefail -c 'move "$@"' -- {} "$email_address" .Archive
+
+# Inbox.
+# Optionnally, and similarly to the archival process done above, move messages
+# tagged inbox to the INBOX.
+notmuch search --format text0 --output files "path:$email_address/** and not folder:$email_address and tag:inbox" \
+  | xargs -0 -I{} bash -euo pipefail -c 'move "$@"' -- {} "$email_address" .
 
 # Soft delete.
 notmuch search --format text0 --output files "not folder:$email_address/.Trash and tag:deleted" \
-  | xargs -0 -I{} bash -euo pipefail -c 'move "$@"' -- {}  "$email_address" .Trash
+  | xargs -0 -I{} bash -euo pipefail -c 'move "$@"' -- {} "$email_address" .Trash
 #+end_src
 
 Archiving is only safe because I have a Sieve script that applies the =inbox=
@@ -91,8 +99,8 @@ set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" > /dev/null && pwd)"/common.bash
 
 # Follow Notmuch's convention.
-notmuch tag +deleted -- "folder:$email_address/.Trash"
-notmuch tag +spam -- "folder:$email_address/.Junk"
+notmuch tag +deleted -- "not tag:deleted and folder:$email_address/.Trash"
+notmuch tag +spam -- "not tag:spam and folder:$email_address/.Junk"
 
 sin push "${sin_arguments[@]}"
 #+end_src
