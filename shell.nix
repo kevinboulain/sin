@@ -2,18 +2,13 @@ let
   pkgs = import <nixpkgs> {
     overlays = [
       (self: super: {
-        xapian = super.enableDebugging (super.xapian.overrideAttrs (old: {
-          doCheck = false;
-        }));
         notmuch = super.enableDebugging (super.notmuch.overrideAttrs (old: {
           doCheck = false;
-          patches = [
-            ./patches/notmuch-01.patch
-            ./patches/notmuch-02.patch
-            ./patches/notmuch-03.patch
-            ./patches/notmuch-04.patch
-            ./patches/notmuch-05.patch
-          ];
+          src = super.fetchgit {
+            url = "https://git.notmuchmail.org/git/notmuch";
+            rev = "6273966d0b50541a37a652ccf6113f184eff5300";
+            hash = "sha256-w88B4VLsU7DfyBagRyB7FxqhNddEUxNnQLTDotTb4s8=";
+          };
         }));
       })
       (self: super: {
