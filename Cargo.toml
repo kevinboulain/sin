@@ -108,6 +108,12 @@ version = "0.10.*"
 default-features = false
 features = []
 
+[dev-dependencies.pretty_assertions]
+version = "1.3.*"
+# https://github.com/rust-pretty-assertions/rust-pretty-assertions/blob/main/pretty_assertions/Cargo.toml
+default-features = false
+features = ["std"]
+
 [dev-dependencies.portpicker]
 version = "0.1.*"
 # https://github.com/Dentosal/portpicker-rs/blob/master/Cargo.toml

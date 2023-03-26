@@ -15,7 +15,7 @@ fn lastmod() {
       runner.run(sin::Mode::Push)?;
     }
 
-    assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
+    pretty_assertions::assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
 +sin.internal -- id:0@sin
 #= 0@sin sin.INBOX.highestmodseq=2 sin.INBOX.separator=%2f sin.INBOX.uidvalidity=<omitted> sin.lastmod=4 sin.mailbox=INBOX sin.marker=root
 +unread -- id:test
@@ -37,7 +37,7 @@ fn quoting() {
 
     runner.run(sin::Mode::Pull)?;
 
-    assert_eq!(format!("#notmuch-dump batch-tag:3 config,properties,tags
+    pretty_assertions::assert_eq!(format!("#notmuch-dump batch-tag:3 config,properties,tags
 +sin.internal -- id:0@sin
 #= 0@sin sin.INBOX.highestmodseq=1 sin.INBOX.separator=%2f sin.INBOX.uidvalidity=<omitted> sin.{urlencoded_folder}.highestmodseq=2 sin.{urlencoded_folder}.separator=%2f sin.{urlencoded_folder}.uidvalidity=<omitted> sin.mailbox=INBOX sin.mailbox={urlencoded_folder} sin.marker=root
 +unread -- id:test1
@@ -61,7 +61,7 @@ fn quoting() {
     fs::metadata(path::Path::new(&format!("{}:2,ac", path.to_str().unwrap())))?; // 'b' for inbox.
     assert_eq!((1, 1, 0), runner.maildir_count(&client_folder)?);
 
-    assert_eq!(format!("#notmuch-dump batch-tag:3 config,properties,tags
+    pretty_assertions::assert_eq!(format!("#notmuch-dump batch-tag:3 config,properties,tags
 +sin.internal -- id:0@sin
 #= 0@sin sin.INBOX.highestmodseq=1 sin.INBOX.separator=%2f sin.INBOX.uidvalidity=<omitted> sin.{urlencoded_folder}.highestmodseq=3 sin.{urlencoded_folder}.separator=%2f sin.{urlencoded_folder}.uidvalidity=<omitted> sin.lastmod=7 sin.mailbox=INBOX sin.mailbox={urlencoded_folder} sin.marker=root
 +test1 +unknown-0 +unread -- id:test1

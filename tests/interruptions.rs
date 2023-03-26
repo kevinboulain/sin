@@ -36,7 +36,7 @@ fn successful_move_pre_commit_begin(runner: &common::Runner) -> anyhow::Result<(
   assert_eq!((1, 0, 0), runner.maildir_count(&server_folder)?);
 
   // But the current state doesn't agree.
-  assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
+  pretty_assertions::assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
 +sin.internal -- id:0@sin
 #= 0@sin sin.INBOX.highestmodseq=1 sin.INBOX.separator=%2f sin.INBOX.uidvalidity=<omitted> sin.folder.highestmodseq=1 sin.folder.separator=%2f sin.folder.uidvalidity=<omitted> sin.lastmod=4 sin.mailbox=INBOX sin.mailbox=folder sin.marker=root
 +inbox +unread -- id:test
@@ -50,7 +50,7 @@ fn successful_move_pre_commit_end(runner: &common::Runner) -> anyhow::Result<()>
   runner.run(sin::Mode::Pull)?;
 
   // No more inbox.
-  assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
+  pretty_assertions::assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
 +sin.internal -- id:0@sin
 #= 0@sin sin.INBOX.highestmodseq=4 sin.INBOX.separator=%2f sin.INBOX.uidvalidity=<omitted> sin.folder.highestmodseq=3 sin.folder.separator=%2f sin.folder.uidvalidity=<omitted> sin.lastmod=4 sin.mailbox=INBOX sin.mailbox=folder sin.marker=root
 +inbox +unread -- id:test
@@ -102,7 +102,7 @@ fn move_out_of_tmp_post_rename() {
     let client_inbox = runner.client_maildir("INBOX", &None)?;
     assert_eq!((0, 1, 0), runner.maildir_count(&client_inbox)?);
 
-    assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
+    pretty_assertions::assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
 +sin.internal -- id:0@sin
 #= 0@sin sin.INBOX.highestmodseq=2 sin.INBOX.separator=%2f sin.INBOX.uidvalidity=<omitted> sin.mailbox=INBOX sin.marker=root
 +unread -- id:test
@@ -140,7 +140,7 @@ fn append_is_not_transactional_push() {
 
     runner.run(sin::Mode::Pull)?;
 
-    assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
+    pretty_assertions::assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
 +sin.internal -- id:0@sin\n#= 0@sin sin.INBOX.highestmodseq=5 sin.INBOX.separator=%2f sin.INBOX.uidvalidity=<omitted> sin.lastmod=4 sin.mailbox=INBOX sin.marker=root
 +inbox +unread -- id:test
 #= test sin.0.INBOX.modseq=3 sin.0.INBOX.tag=inbox sin.0.INBOX.tag=unread sin.0.INBOX.uid=1 sin.0.INBOX.uidvalidity=<omitted> sin.0.mailbox=INBOX sin.0.marker=message
@@ -160,7 +160,7 @@ fn append_is_not_transactional_pull() {
     let server_inbox = runner.server_maildir("INBOX", &None)?;
     assert_eq!((1, 0, 0), runner.maildir_count(&server_inbox)?);
 
-    assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
+    pretty_assertions::assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
 +sin.internal -- id:0@sin\n#= 0@sin sin.INBOX.highestmodseq=3 sin.INBOX.separator=%2f sin.INBOX.uidvalidity=<omitted> sin.mailbox=INBOX sin.marker=root
 +inbox +unread -- id:test
 #= test sin.0.INBOX.modseq=3 sin.0.INBOX.tag=inbox sin.0.INBOX.tag=unread sin.0.INBOX.uid=1 sin.0.INBOX.uidvalidity=<omitted> sin.0.mailbox=INBOX sin.0.marker=message
@@ -168,7 +168,7 @@ fn append_is_not_transactional_pull() {
 
     runner.run(sin::Mode::Push)?;
 
-    assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
+    pretty_assertions::assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
 +sin.internal -- id:0@sin\n#= 0@sin sin.INBOX.highestmodseq=3 sin.INBOX.separator=%2f sin.INBOX.uidvalidity=<omitted> sin.lastmod=6 sin.mailbox=INBOX sin.marker=root
 +inbox +unread -- id:test
 #= test sin.0.INBOX.modseq=3 sin.0.INBOX.tag=inbox sin.0.INBOX.tag=unread sin.0.INBOX.uid=1 sin.0.INBOX.uidvalidity=<omitted> sin.0.mailbox=INBOX sin.0.marker=message
@@ -196,7 +196,7 @@ fn stored_flags() {
     assert!(path::Path::new(&format!("{}:2,S", path.to_str().unwrap())).exists());
 
     // But not the local cache.
-    assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
+    pretty_assertions::assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
 +sin.internal -- id:0@sin
 #= 0@sin sin.INBOX.highestmodseq=2 sin.INBOX.separator=%2f sin.INBOX.uidvalidity=<omitted> sin.mailbox=INBOX sin.marker=root
  -- id:test
@@ -212,7 +212,7 @@ fn stored_flags() {
 
     runner.run(sin::Mode::Pull)?;
 
-    assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
+    pretty_assertions::assert_eq!("#notmuch-dump batch-tag:3 config,properties,tags
 +sin.internal -- id:0@sin
 #= 0@sin sin.INBOX.highestmodseq=3 sin.INBOX.separator=%2f sin.INBOX.uidvalidity=<omitted> sin.mailbox=INBOX sin.marker=root
  -- id:test
