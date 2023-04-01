@@ -9,6 +9,7 @@ mod common;
 //
 // Make sure this is run with a sufficiently high optimization level otherwise it will show
 // misleading results during profiling: https://github.com/kevinmehall/rust-peg/discussions/326
+//  CARGO_PROFILE_TEST_OPT_LEVEL=3 cargo test maildir -- --include-ignored
 //
 // To generate a maildir from a mailbox:
 //  mb2md -s path/to.mbox -d /tmp/maildir

@@ -1,6 +1,6 @@
 use crate::{imap, maildir, notmuch, sync};
 use anyhow::Context as _;
-use std::{collections, fs, io, path};
+use std::{collections, fs, path};
 
 struct Append {
   uidvalidity: u64,
@@ -15,7 +15,7 @@ fn append<RW>(
   buffer: &[u8],
 ) -> anyhow::Result<Append>
 where
-  RW: io::Read + io::Write,
+  RW: imap::ReadWrite,
 {
   // .intersperse() is nightly...
   let mut flags_ = "".to_string();
@@ -77,7 +77,7 @@ fn store<RW>(
   diff: Diff,
 ) -> anyhow::Result<Option<imap::Store>>
 where
-  RW: io::Read + io::Write,
+  RW: imap::ReadWrite,
 {
   // While it's not part of the RFC, specifying both +FLAGS.SILENT and -FLAGS.SILENT will result in
   // Dovecot silently ignoring the last occurence.
@@ -142,7 +142,7 @@ fn r#move<RW>(
   mailbox: &[u8],
 ) -> anyhow::Result<Option<Move>>
 where
-  RW: io::Read + io::Write,
+  RW: imap::ReadWrite,
 {
   let command: &[&[u8]] = &[
     b"move UID MOVE ",
@@ -258,7 +258,7 @@ pub fn run<RW>(
   maildir_builder: &maildir::Builder,
 ) -> anyhow::Result<()>
 where
-  RW: io::Read + io::Write,
+  RW: imap::ReadWrite,
 {
   // https://www.rfc-editor.org/rfc/rfc7162#section-6
   // After completing a full synchronization, the client MUST also take note of any unsolicited

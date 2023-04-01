@@ -18,9 +18,6 @@ struct Arguments {
 fn main() -> anyhow::Result<()> {
   let arguments = Arguments::parse();
 
-  let encoder = Box::new(log4rs::encode::pattern::PatternEncoder::new(
-    "{d(%F %T)} {l} {t} - {m}{n}",
-  ));
   log4rs::init_config(
     log4rs::config::Config::builder()
       .appender(
@@ -32,7 +29,9 @@ fn main() -> anyhow::Result<()> {
             "file",
             Box::new(
               log4rs::append::file::FileAppender::builder()
-                .encoder(encoder.clone())
+                .encoder(Box::new(log4rs::encode::pattern::PatternEncoder::new(
+                  "{d(%F %T)} {l} {t} {I} - {m}{n}",
+                )))
                 .build(
                   path::Path::new(&arguments.log_directory)
                     .join(format!("{}.log", arguments.arguments.namespace)),
@@ -49,7 +48,9 @@ fn main() -> anyhow::Result<()> {
             "console",
             Box::new(
               log4rs::append::console::ConsoleAppender::builder()
-                .encoder(encoder)
+                .encoder(Box::new(log4rs::encode::pattern::PatternEncoder::new(
+                  "{d(%F %T)} {l} {t} - {m}{n}",
+                )))
                 .build(),
             ),
           ),

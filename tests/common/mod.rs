@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use std::{io, ops, panic, path, process, thread, time};
+use std::{io, num, ops, panic, path, process, thread, time};
 
 #[derive(Debug)]
 pub struct Child(process::Child);
@@ -85,6 +85,7 @@ impl Runner {
       mode,
       address: "localhost".to_string(),
       port: self.port,
+      threads: num::NonZeroUsize::new(8).unwrap(),
       tls: false,
       timeout: Some(time::Duration::new(10, 0)),
       user: self.user.clone(),

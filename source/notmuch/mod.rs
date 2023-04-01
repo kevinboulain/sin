@@ -295,7 +295,7 @@ impl<'a> Message<'a> {
     modseq: u64,
     tags: &collections::HashSet<&str>,
   ) -> anyhow::Result<()> {
-    // TODO? should we make these properties multi-valued? I'm not sure what it would bring to the
+    // TODO? should these properties be multi-valued? I'm not sure what it would bring to the
     // table...
     if let Ok(Some(current_uidvalidity)) = property(
       &self.inner,

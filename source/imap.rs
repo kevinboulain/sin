@@ -575,7 +575,20 @@ fn summarize(bytes: &[u8]) -> String {
   string
 }
 
-#[derive(Debug)]
+pub trait ReadWrite {
+  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize>;
+  fn write_all(&mut self, buf: &[u8]) -> io::Result<()>;
+}
+
+impl<Any: io::Read + io::Write> ReadWrite for Any {
+  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    <Self as io::Read>::read(self, buf)
+  }
+  fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+    <Self as io::Write>::write_all(self, buf)
+  }
+}
+
 pub struct Stream<RW> {
   rw: RW,
   buffer: Vec<u8>,
@@ -585,7 +598,7 @@ pub struct Stream<RW> {
 
 impl<RW> Stream<RW>
 where
-  RW: io::Read + io::Write,
+  RW: ReadWrite,
 {
   pub fn new(rw: RW) -> Self {
     Self {

@@ -1,6 +1,7 @@
 use crate::{imap, maildir, notmuch, sync};
 use anyhow::Context as _;
-use std::{collections, fs, io, path, str};
+use crossbeam_utils::thread;
+use std::{cmp, collections, fs, io, num, path, str, sync::mpsc};
 
 fn reselect<RW>(
   stream: &mut imap::Stream<RW>,
@@ -9,7 +10,7 @@ fn reselect<RW>(
   mut highestmodseq: u64,
 ) -> anyhow::Result<sync::Select>
 where
-  RW: io::Read + io::Write,
+  RW: imap::ReadWrite,
 {
   loop {
     // https://www.rfc-editor.org/rfc/rfc3501#section-2.3.1.1
@@ -39,7 +40,7 @@ where
     &'a [u8],
   )
     -> Result<(usize, (u64, R)), peg::error::ParseError<<[u8] as ::peg::Parse>::PositionRepr>>,
-  RW: io::Read + io::Write,
+  RW: imap::ReadWrite,
 {
   let command: &[&[u8]] = &[
     b"fetch UID FETCH ",
@@ -140,14 +141,17 @@ fn remove_message(
   Ok(removals)
 }
 
-pub fn run<RW>(
-  stream: &mut imap::Stream<RW>,
+pub fn run<O>(
+  open: &O,
+  credentials: &sync::Credentials,
+  stream: &mut imap::Stream<O::RW>,
   database: &mut notmuch::Database<notmuch::Attached>,
   maildir_builder: &maildir::Builder,
   purgeable: &[String],
+  threads: num::NonZeroUsize,
 ) -> anyhow::Result<()>
 where
-  RW: io::Read + io::Write,
+  O: sync::Open,
 {
   let mut removals = Vec::new();
 
@@ -237,7 +241,8 @@ where
         continue;
       }
       log::debug!(
-        "updating message {} (uidvalidity:{uidvalidity} uid:{uid} modseq:({modseq} -> {modseq_}) flags:({:?} -> {flags:?}))",
+        "updating message {} (uidvalidity:{uidvalidity} uid:{uid} modseq:({modseq} -> {modseq_}) \
+         flags:({:?} -> {flags:?}))",
         message.message_id()?,
         notmuch::tags_to_flags(&message.tags()?),
       );
@@ -253,44 +258,98 @@ where
     }
 
     // The updated messages do not already exist in the database, add them.
-    for (uid, sync::Changes { flags, modseq }) in changes {
-      // https://www.rfc-editor.org/rfc/rfc3501#section-6.4.5
-      // RFC822.SIZE The [RFC-2822] size of the message.
-      let size = fetch(stream, uid, "RFC822.SIZE", imap::parser::fetch_size_data)?;
-      // Something somewhat unique but not as much as recommended by the maildir 'standard' so we
-      // can resume after an interruption. It should never be relied on anywhere else (that's what
-      // properties are for): that would break FCC that we can not control.
-      let name = format!("{}_{uidvalidity}_{uid}", database.root_namespace());
-      let path = match maildir.tmp_named_with_size(&name, size)? {
-        Some(path) => {
-          log::debug!(
-            "reusing previously fetched message (uidvalidity:{uidvalidity} uid:{uid} path:{path:?})",
+    let changes: Vec<(u64, sync::Changes)> = changes.into_iter().collect(); // Stable iteration order.
+    thread::scope(|scope| -> anyhow::Result<()> {
+      let root_namespace = database.root_namespace();
+      let (send, receive) = mpsc::channel();
+
+      // Spawning a bunch of threads for downloading messages is an easy way to greatly increase
+      // throughput.
+      for thread in 0..cmp::min(threads.get(), changes.len()) {
+        let (changes, maildir, send) = (&changes, &maildir, send.clone());
+        scope.spawn(move |_| -> anyhow::Result<()> {
+          // Reestablish a connection.
+          // Ideally, this should be done only once and not for each mailbox but I find Rayon's
+          // initialization of threads painful.
+          let mut stream = imap::Stream::new(open.open()?);
+          sync::greetings(&mut stream)?;
+          sync::authenticate(&mut stream, credentials)?;
+          sync::enable(&mut stream)?;
+          // The highestmodseq doesn't matter since we aren't interested in changes. Use the latest.
+          let select = sync::select(&mut stream, mailbox_bytes, uidvalidity, highestmodseq)?;
+          anyhow::ensure!(
+            select.uidvalidity == uidvalidity,
+            // Better stop here and let the above code deal with it properly.
+            "{mailbox_string}'s validity has changed on the server, rerun a pull"
           );
-          path
+
+          for (uid, changes) in changes.iter().skip(thread).step_by(threads.get()) {
+            // https://www.rfc-editor.org/rfc/rfc3501#section-6.4.5
+            // RFC822.SIZE The [RFC-2822] size of the message.
+            let size = fetch(
+              &mut stream,
+              *uid,
+              "RFC822.SIZE",
+              imap::parser::fetch_size_data,
+            )?;
+            // Something somewhat unique but not as much as recommended by the maildir 'standard' so
+            // we can resume after an interruption. It should never be relied on anywhere else
+            // (that's what properties are for): that would break FCC that we can not control.
+            let name = format!("{root_namespace}_{uidvalidity}_{uid}");
+            let path = match maildir.tmp_named_with_size(&name, size)? {
+              Some(path) => {
+                log::debug!(
+                  "reusing previously fetched message (uidvalidity:{uidvalidity} uid:{uid} \
+                   path:{path:?})",
+                );
+                path
+              }
+              None => {
+                // https://www.rfc-editor.org/rfc/rfc3501#section-6.4.5
+                // BODY.PEEK[<section>]<<partial>> An alternate form of BODY[<section>] that does
+                // not implicitly set the \Seen flag.
+                let body = fetch(
+                  &mut stream,
+                  *uid,
+                  "BODY.PEEK[]",
+                  imap::parser::fetch_body_data,
+                )?;
+                maildir.tmp_named(&name, &body.with_context(|| "BODY.PEEK[] returned NIL")?)?
+              }
+            };
+            send.send((*uid, changes.clone(), path))?;
+          }
+          Ok(())
+        });
+      }
+
+      // Database updates still need to be serialized to the main thread.
+      drop(send);
+      loop {
+        match receive.recv() {
+          Ok((uid, sync::Changes { flags, modseq }, path)) => {
+            let mut message = database.add(&path)?;
+            log::debug!(
+              "adding message {} (uidvalidity:{uidvalidity} uid:{uid} modseq:{modseq} \
+               flags:{flags:?})",
+              message.message_id()?
+            );
+            message.update_mailbox_properties(
+              mailbox_string,
+              uidvalidity,
+              uid,
+              modseq,
+              &notmuch::flags_to_tags(&flags.iter().map(String::as_str).collect()),
+            )?;
+            // Do not call tags_to_maildir_flags: this would move the message outside of tmp and it
+            // would later be picked by 'notmuch new' even if the transaction fails.
+          }
+          Err(mpsc::RecvError) => break Ok(()), // No sender left.
         }
-        None => {
-          // https://www.rfc-editor.org/rfc/rfc3501#section-6.4.5
-          // BODY.PEEK[<section>]<<partial>> An alternate form of BODY[<section>] that does not
-          // implicitly set the \Seen flag.
-          let body = fetch(stream, uid, "BODY.PEEK[]", imap::parser::fetch_body_data)?;
-          maildir.tmp_named(&name, &body.with_context(|| "BODY.PEEK[] returned NIL")?)?
-        }
-      };
-      let mut message = database.add(&path)?;
-      log::debug!(
-        "adding message {} (uidvalidity:{uidvalidity} uid:{uid} modseq:{modseq} flags:{flags:?})",
-        message.message_id()?
-      );
-      message.update_mailbox_properties(
-        mailbox_string,
-        uidvalidity,
-        uid,
-        modseq,
-        &notmuch::flags_to_tags(&flags.iter().map(String::as_str).collect()),
-      )?;
-      // Do not call tags_to_maildir_flags: this would move the message outside of tmp and it
-      // would later be picked by 'notmuch new' even if the transaction fails.
-    }
+      }
+    })
+    // A thread has panicked, this is meant to be bubbled up.
+    .unwrap()?;
 
     // The removed messages exist in the database, remove them.
     let mut messages = search_uids(

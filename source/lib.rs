@@ -3,17 +3,21 @@
 // https://www.rfc-editor.org/rfc/rfc4549 - Synchronization Operations for Disconnected IMAP4 Clients
 // https://www.rfc-editor.org/rfc/rfc7162 - [...] Quick Mailbox Resynchronization (QRESYNC)
 
+#![allow(clippy::upper_case_acronyms)]
+
 use anyhow::Context as _;
 use std::{
   collections, error, fmt, io,
   net::{self, ToSocketAddrs as _},
-  num, path, result, str, thread, time,
+  num, path, process, result, str, thread, time,
 };
+use zeroize::Zeroize as _;
 
 mod imap;
 pub mod maildir;
 mod notmuch;
 mod sync;
+use sync::Open as _;
 
 #[derive(Clone, Debug, PartialEq, clap::ValueEnum)]
 pub enum Mode {
@@ -42,6 +46,12 @@ pub struct Arguments {
   pub tls: bool,
   #[arg(long = "timeout", help = "TCP timeout (in seconds)", value_parser = parse_duration)]
   pub timeout: Option<time::Duration>,
+  #[arg(
+    long = "threads",
+    help = "Number of worker threads to spawn",
+    default_value_t = num::NonZeroUsize::new(8).unwrap()
+  )]
+  pub threads: num::NonZeroUsize,
 
   #[arg(long = "user", help = "IMAP user")]
   pub user: String,
@@ -119,18 +129,22 @@ fn interrupt(interruption: Interruption) -> result::Result<(), Interruption> {
   }
 }
 
-fn inner_run<RW>(arguments: &Arguments, rw: RW) -> anyhow::Result<()>
+fn inner_run<O>(
+  arguments: &Arguments,
+  open: &O,
+  credentials: &sync::Credentials,
+  stream: &mut imap::Stream<O::RW>,
+) -> anyhow::Result<()>
 where
-  RW: io::Read + io::Write,
+  O: sync::Open,
 {
   // Exchange pleasantries with the server.
-  let mut stream = imap::Stream::new(rw);
-  sync::greetings(&mut stream)?;
+  sync::greetings(stream)?;
   if arguments.mode == Mode::ConnectOnly {
     return Ok(());
   }
-  sync::authenticate(&mut stream, &arguments.user, &arguments.password_command)?;
-  sync::enable(&mut stream)?;
+  sync::authenticate(stream, credentials)?;
+  sync::enable(stream)?;
 
   // Open (or create) the database.
   let notmuch = arguments.notmuch.as_ref().map(path::Path::new);
@@ -167,12 +181,15 @@ where
   database.transaction(|database| match arguments.mode {
     Mode::ConnectOnly => unreachable!(),
     Mode::Pull => sync::pull::run(
-      &mut stream,
+      open,
+      credentials,
+      stream,
       database,
       &maildir_builder,
       &arguments.purgeable,
+      arguments.threads,
     ),
-    Mode::Push => sync::push::run(&mut stream, database, relative_maildir, &maildir_builder),
+    Mode::Push => sync::push::run(stream, database, relative_maildir, &maildir_builder),
   })?;
   database.transaction(|database| sync::move_out_of_tmp(database, relative_maildir))?;
 
@@ -192,51 +209,136 @@ where
   Ok(())
 }
 
+struct TCP<'a> {
+  address: &'a str,
+  port: u16,
+  timeout: Option<time::Duration>,
+}
+
+impl<'a> sync::Open for TCP<'a> {
+  type RW = net::TcpStream;
+
+  fn open(&self) -> anyhow::Result<Self::RW> {
+    let &Self {
+      address,
+      port,
+      timeout,
+      ..
+    } = self;
+    let address = (address, port)
+      .to_socket_addrs()?
+      .next()
+      .with_context(|| format!("couldn't resolve {address}:{port}"))?;
+    log::debug!("connecting to {:?} with timeout {:?}", address, timeout);
+    Ok(match timeout {
+      Some(duration) => {
+        let stream = net::TcpStream::connect_timeout(&address, duration)?;
+        stream.set_read_timeout(Some(duration))?;
+        stream
+      }
+      None => net::TcpStream::connect(address)?,
+    })
+  }
+}
+
+struct TLS<'a>(TCP<'a>);
+
+#[ouroboros::self_referencing]
+struct TLSStream {
+  tcp_stream: net::TcpStream,
+  tls_connection: rustls::ClientConnection,
+  #[borrows(mut tcp_stream, mut tls_connection)]
+  #[covariant]
+  tls_stream: rustls::Stream<'this, rustls::ClientConnection, net::TcpStream>,
+}
+
+impl imap::ReadWrite for TLSStream {
+  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    self.with_mut(|fields| fields.tls_stream.read(buf))
+  }
+
+  fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+    self.with_mut(|fields| fields.tls_stream.write_all(buf))
+  }
+}
+
+impl<'a> sync::Open for TLS<'a> {
+  type RW = TLSStream;
+
+  fn open(&self) -> anyhow::Result<Self::RW> {
+    let mut root_store = rustls::RootCertStore::empty();
+    for certificate in rustls_native_certs::load_native_certs()? {
+      root_store.add(&rustls::Certificate(certificate.0))?
+    }
+    Ok(
+      TLSStreamBuilder {
+        tcp_stream: self.0.open()?,
+        tls_connection: rustls::ClientConnection::new(
+          std::sync::Arc::new(
+            rustls::ClientConfig::builder()
+              .with_safe_defaults()
+              .with_root_certificates(root_store)
+              .with_no_client_auth(),
+          ),
+          self
+            .0
+            .address
+            .try_into()
+            .with_context(|| format!("couldn't convert {} to server name", self.0.address))?,
+        )?,
+        tls_stream_builder: |tcp_stream, tls_connection| {
+          rustls::Stream::new(tls_connection, tcp_stream)
+        },
+      }
+      .build(),
+    )
+  }
+}
+
+fn credentials(user: &str, password_command: &[String]) -> anyhow::Result<sync::Credentials> {
+  let mut program = process::Command::new(&password_command[0]);
+  let command = program.args(&password_command[1..]);
+  log::info!("getting password from {command:?}");
+  let output = command.output()?;
+  let mut stdout = output.stdout;
+  anyhow::ensure!(
+    output.status.success(),
+    "couldn't get password: {command:?} failed"
+  );
+  let password = str::from_utf8(
+    stdout
+      .split(|byte| *byte == b'\n')
+      .next()
+      .with_context(|| format!("{command:?} didn't output anything"))?,
+  )
+  .with_context(|| format!("{command:?} didn't output UTF-8"))?;
+  let credentials = imap::plain(user, password);
+  stdout.zeroize();
+  Ok(sync::Credentials(credentials))
+}
+
 pub fn run(arguments: &Arguments) -> anyhow::Result<()> {
   interruption(&arguments.interruption);
-
-  // Establish a connection to the server.
-  let address = (arguments.address.as_str(), arguments.port)
-    .to_socket_addrs()?
-    .next()
-    .with_context(|| format!("couldn't resolve {}:{}", arguments.address, arguments.port))?;
-  log::info!(
-    "connecting to {:?} with timeout {:?}",
-    address,
-    arguments.timeout
-  );
-  let mut tcp_stream = match arguments.timeout {
-    Some(duration) => {
-      let stream = net::TcpStream::connect_timeout(&address, duration)?;
-      stream.set_read_timeout(Some(duration))?;
-      stream
-    }
-    None => net::TcpStream::connect(address)?,
+  let credentials = credentials(&arguments.user, &arguments.password_command)?;
+  let tcp = TCP {
+    address: &arguments.address,
+    port: arguments.port,
+    timeout: arguments.timeout,
   };
-
   if !arguments.tls {
-    return inner_run(arguments, tcp_stream);
+    log::warn!("TLS not enabled, credentials will be sent in clear over the wire");
+    return inner_run(
+      arguments,
+      &tcp,
+      &credentials,
+      &mut imap::Stream::new(tcp.open()?),
+    );
   }
-
-  let mut root_store = rustls::RootCertStore::empty();
-  for certificate in rustls_native_certs::load_native_certs()? {
-    root_store.add(&rustls::Certificate(certificate.0))?
-  }
-  let mut connection = rustls::ClientConnection::new(
-    std::sync::Arc::new(
-      rustls::ClientConfig::builder()
-        .with_safe_defaults()
-        .with_root_certificates(root_store)
-        .with_no_client_auth(),
-    ),
-    arguments
-      .address
-      .as_str()
-      .try_into()
-      .with_context(|| format!("couldn't convert {} to server name", arguments.address))?,
-  )?;
+  let tls = TLS(tcp);
   inner_run(
     arguments,
-    rustls::Stream::new(&mut connection, &mut tcp_stream),
+    &tls,
+    &credentials,
+    &mut imap::Stream::new(tls.open()?),
   )
 }

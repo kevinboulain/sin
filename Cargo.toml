@@ -42,6 +42,12 @@ version = "2.*"
 default-features = false
 features = []
 
+[dependencies.crossbeam-utils]
+version = "0.8.*"
+# https://github.com/crossbeam-rs/crossbeam/blob/master/crossbeam-utils/Cargo.toml
+default-features = false
+features = ["std"]
+
 [dependencies.encoding_rs]
 version = "0.8.*"
 # https://github.com/hsivonen/encoding_rs/blob/master/Cargo.toml
@@ -69,6 +75,12 @@ features = ["std"]
 [dependencies.once_cell]
 version = "1.17.*"
 # https://github.com/matklad/once_cell/blob/master/Cargo.toml
+default-features = false
+features = ["std"]
+
+[dependencies.ouroboros]
+version = "0.15.*"
+# https://github.com/joshua-maros/ouroboros/blob/main/ouroboros/Cargo.toml
 default-features = false
 features = ["std"]
 
@@ -100,7 +112,7 @@ features = ["std", "v4"]
 version = "1.*"
 # https://github.com/RustCrypto/utils/blob/master/zeroize/Cargo.toml
 default-features = false
-features = ["std"]
+features = ["std", "zeroize_derive"]
 
 [dev-dependencies.env_logger]
 version = "0.10.*"

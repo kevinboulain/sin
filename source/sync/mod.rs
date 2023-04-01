@@ -1,14 +1,22 @@
 use crate::{imap, maildir, notmuch};
 use anyhow::Context as _;
-use std::{borrow, collections, fs, io, path, process, str};
-use zeroize::Zeroize as _;
+use std::{borrow, collections, fs, io, path, str};
 
 pub mod pull;
 pub mod push;
 
+#[derive(zeroize::ZeroizeOnDrop)]
+pub struct Credentials(pub String);
+
+// Establish a connection to the server.
+pub trait Open: Send + Sync {
+  type RW: imap::ReadWrite;
+  fn open(&self) -> anyhow::Result<Self::RW>;
+}
+
 pub fn greetings<RW>(stream: &mut imap::Stream<RW>) -> anyhow::Result<()>
 where
-  RW: io::Read + io::Write,
+  RW: imap::ReadWrite,
 {
   // Fetch some data first (the Stream doesn't pull, it bufferizes each response to completion).
   // Assumme we won't end up with a partial read of the greetings.
@@ -43,35 +51,16 @@ where
 
 pub fn authenticate<RW>(
   stream: &mut imap::Stream<RW>,
-  user: &str,
-  password_command: &[String],
+  credentials: &Credentials,
 ) -> anyhow::Result<()>
 where
-  RW: io::Read + io::Write,
+  RW: imap::ReadWrite,
 {
-  let mut program = process::Command::new(&password_command[0]);
-  let command = program.args(&password_command[1..]);
-  let output = command.output()?;
-  let mut stdout = output.stdout;
-  anyhow::ensure!(
-    output.status.success(),
-    "couldn't get password: {command:?} failed"
-  );
-  let password = str::from_utf8(
-    stdout
-      .split(|byte| *byte == b'\n')
-      .next()
-      .with_context(|| format!("{command:?} didn't output anything"))?,
-  )
-  .with_context(|| format!("{command:?} didn't output UTF-8"))?;
-  let mut credentials = imap::plain(user, password);
-  stdout.zeroize();
   let command: &[&[u8]] = &[b"authenticate AUTHENTICATE PLAIN "];
   let result = stream.input(
-    &[command, &[credentials.as_bytes(), b"\r\n"]].concat(),
+    &[command, &[credentials.0.as_bytes(), b"\r\n"]].concat(),
     command.len(),
   );
-  credentials.zeroize();
   result?;
   let capabilities = loop {
     match stream.expect(imap::parser::start)? {
@@ -101,7 +90,7 @@ where
 
 pub fn enable<RW>(stream: &mut imap::Stream<RW>) -> anyhow::Result<()>
 where
-  RW: io::Read + io::Write,
+  RW: imap::ReadWrite,
 {
   // https://www.rfc-editor.org/rfc/rfc7162
   // The Quick Mailbox Resynchronization (QRESYNC) IMAP extension is an extension [...] that allows
@@ -150,7 +139,7 @@ struct Mailbox {
 
 fn list<RW>(stream: &mut imap::Stream<RW>) -> anyhow::Result<Vec<Mailbox>>
 where
-  RW: io::Read + io::Write,
+  RW: imap::ReadWrite,
 {
   let command: &[&[u8]] = &[b"list LIST \"\" \"*\"\r\n"];
   stream.input(command, command.len())?;
@@ -185,7 +174,7 @@ where
   Ok(mailboxes)
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Changes {
   flags: Vec<String>,
   modseq: u64,
@@ -206,7 +195,7 @@ fn select<RW>(
   highestmodseq: u64,
 ) -> anyhow::Result<Select>
 where
-  RW: io::Read + io::Write,
+  RW: imap::ReadWrite,
 {
   let command: &[&[u8]] = &[
     b"select SELECT {",
