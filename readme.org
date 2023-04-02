@@ -173,7 +173,8 @@ For each message synchronized by Sin, another set of properties is attached to i
  - =sin.$id.$mailbox.uidvalidity=, single-valued, the UID validity of the
    mailbox =$mailbox=.
  - =sin.$id.$mailbox.uid=, single-valued, the UID of the email in mailbox
-   =$mailbox=.
+   =$mailbox=. That means duplicates (i.e. same message ID) in the same mailbox
+   are currently not well supported (a warning is emitted).
  - =sin.$id.$mailbox.modseq=, single-valued, the modification sequence of the
    email in mailbox =$mailbox=.
  - =sin.$id.$mailbox.tag=, multi-valued, last known list of Notmuch tags,

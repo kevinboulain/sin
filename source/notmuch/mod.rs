@@ -295,6 +295,23 @@ impl<'a> Message<'a> {
     modseq: u64,
     tags: &collections::HashSet<&str>,
   ) -> anyhow::Result<()> {
+    // TODO? should we make these properties multi-valued? I'm not sure what it would bring to the
+    // table...
+    if let Ok(Some(current_uidvalidity)) = property(
+      &self.inner,
+      self.namespace,
+      &format!("{mailbox}.uidvalidity"),
+    ) {
+      if current_uidvalidity.parse::<u64>().unwrap() == uidvalidity && self.uid(mailbox)? != uid {
+        log::warn!(
+          "message {} has duplicates in {mailbox} but the property system doesn't handle this \
+           edge case currently and if it did, all flags would end up the same given how Notmuch \
+           handles them (get rid of this warning by removing the duplicates)",
+          self.message_id()?
+        );
+      }
+    }
+
     for (property, old_value, new_value) in [
       // The marker
       ("marker", None, Some(MESSAGE_MARKER)),
