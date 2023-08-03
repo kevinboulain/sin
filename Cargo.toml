@@ -13,7 +13,7 @@ name = "sin"
 path = "source/lib.rs"
 
 [build-dependencies.bindgen]
-version = "0.64.*"
+version = "0.66.*"
 # https://github.com/rust-lang/rust-bindgen/blob/main/bindgen/Cargo.toml
 default-features = false
 features = ["logging", "runtime"]
@@ -73,13 +73,13 @@ default-features = false
 features = ["std"]
 
 [dependencies.once_cell]
-version = "1.17.*"
+version = "1.18.*"
 # https://github.com/matklad/once_cell/blob/master/Cargo.toml
 default-features = false
 features = ["std"]
 
 [dependencies.ouroboros]
-version = "0.15.*"
+version = "0.17.*"
 # https://github.com/joshua-maros/ouroboros/blob/main/ouroboros/Cargo.toml
 default-features = false
 features = ["std"]
@@ -91,7 +91,7 @@ default-features = false
 features = []
 
 [dependencies.rustls]
-version = "0.20.*"
+version = "0.21.*"
 # https://github.com/rustls/rustls/blob/main/rustls/Cargo.toml
 default-features = false
 features = ["logging", "tls12"]
@@ -103,7 +103,7 @@ default-features = false
 features = []
 
 [dependencies.uuid]
-version = "1.3.*"
+version = "1.4.*"
 # https://github.com/uuid-rs/uuid/blob/main/Cargo.toml
 default-features = false
 features = ["std", "v4"]
@@ -121,7 +121,7 @@ default-features = false
 features = []
 
 [dev-dependencies.pretty_assertions]
-version = "1.3.*"
+version = "1.4.*"
 # https://github.com/rust-pretty-assertions/rust-pretty-assertions/blob/main/pretty_assertions/Cargo.toml
 default-features = false
 features = ["std"]
@@ -145,7 +145,7 @@ default-features = false
 features = ["log"]
 
 [dev-dependencies.tempfile]
-version = "3.4.*"
+version = "3.7.*"
 # https://github.com/Stebalien/tempfile/blob/master/Cargo.toml
 default-features = false
 features = []
