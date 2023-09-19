@@ -26,9 +26,9 @@ The following IMAP extensions are expected from the server:
  - [[https://www.rfc-editor.org/rfc/rfc7162][=QRESYNC=]]
  - [[https://www.rfc-editor.org/rfc/rfc7888][=LITERAL+=]]
 
-If you actually plan to use it, continue reading but please note compiling
-Notmuch from HEAD is currently necessary. And in case you'd like to report an
-issue please attach the log file (=--log_directory=), sanitize as necessary.
+If you actually plan to use it, continue reading but please note Notmuch 0.38 is
+necessary. And in case you'd like to report an issue please attach the log file
+(=--log_directory=), sanitize as necessary.
 
 ** Example setup
 

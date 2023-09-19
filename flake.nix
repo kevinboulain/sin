@@ -8,16 +8,6 @@
             inherit system;
             overlays = [
               (self: super: {
-                notmuch = super.enableDebugging (super.notmuch.overrideAttrs (old: {
-                  doCheck = false;
-                  src = super.fetchgit {
-                    url = "https://git.notmuchmail.org/git/notmuch";
-                    rev = "6273966d0b50541a37a652ccf6113f184eff5300";
-                    hash = "sha256-w88B4VLsU7DfyBagRyB7FxqhNddEUxNnQLTDotTb4s8=";
-                  };
-                }));
-              })
-              (self: super: {
                 dovecot = super.dovecot.overrideAttrs (old: {
                   doCheck = false;
                   # Remove most patches, especially 2.3.x-module_dir.patch which
@@ -40,7 +30,7 @@
             rustPlatform.bindgenHook
           ];
           buildInputs = with pkgs; [
-            notmuch
+            (assert builtins.compareVersions notmuch.version "0.38" >= 0; notmuch)
           ];
         in
           {
