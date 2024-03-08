@@ -25,25 +25,25 @@
             ];
           };
           toml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
-          nativeBuildInputs = with pkgs; [
-            # https://gist.github.com/yihuang/b874efb97e99d4b6d12bf039f98ae31e?permalink_comment_id=4311076#gistcomment-4311076
-            rustPlatform.bindgenHook
-          ];
-          buildInputs = with pkgs; [
-            (assert builtins.compareVersions notmuch.version "0.38" >= 0; notmuch)
-          ];
         in
-          {
-            packages.${system}.default = pkgs.rustPlatform.buildRustPackage {
-              pname = toml.package.name;
-              version = toml.package.version;
-              cargoLock.lockFile = ./Cargo.lock;
-              src = pkgs.lib.cleanSource ./.;
-              inherit nativeBuildInputs buildInputs;
-              # Tests require a Notmuch configuration and a Dovecot without
-              # nixpkgs patches.
-              doCheck = false;
-            };
+          rec {
+            packages.${system}.default = pkgs.callPackage ({ lib, notmuch, rustPlatform }:
+              rustPlatform.buildRustPackage {
+                pname = toml.package.name;
+                version = toml.package.version;
+                cargoLock.lockFile = ./Cargo.lock;
+                src = lib.cleanSource ./.;
+                nativeBuildInputs = [
+                  # https://gist.github.com/yihuang/b874efb97e99d4b6d12bf039f98ae31e?permalink_comment_id=4311076#gistcomment-4311076
+                  rustPlatform.bindgenHook
+                ];
+                buildInputs = [
+                  (assert builtins.compareVersions notmuch.version "0.38" >= 0; notmuch)
+                ];
+                # Tests require a Notmuch configuration and a Dovecot without
+                # nixpkgs patches.
+                doCheck = false;
+              }) {};
             devShells.${system}.default = pkgs.mkShell {
               name = toml.package.name;
               RUST_BACKTRACE = 1;
@@ -59,12 +59,11 @@
                   socat readline,crlf "''${1?}"
                 }
               '';
-              nativeBuildInputs = with pkgs; nativeBuildInputs ++ [
+              inputsFrom = [ packages.${system}.default ];
+              nativeBuildInputs = with pkgs; [
                 # Toolchain.
-                cargo
                 clippy
                 rust-analyzer
-                rustc  # For rustc --print sysroot (RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc doesn't seem necessary).
                 rustfmt
                 # Goodies.
                 cargo-edit
@@ -72,7 +71,7 @@
                 cargo-flamegraph
                 cargo-tarpaulin
               ];
-              buildInputs = with pkgs; buildInputs ++ [
+              buildInputs = with pkgs; [
                 # Tests.
                 dovecot
                 # Debugging.
